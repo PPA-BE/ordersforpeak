@@ -3,7 +3,7 @@ import { getGraphToken } from "../msal.js";
 import { money, parseNum, escapeHtml, todayStr } from "../utils.js";
 import { openModal, closeModal, renderStatusBadge } from "./modal.js";
 import { buildHtmlPreview, exportExcelUsingTemplate } from "../excel.js";
-import { markPoAsPaid } from "../api/poapi.js";
+import { markPoAsPaid } from "../api/poapi.js"; // kept (unused now) to avoid removing your code
 import { toast } from "../vendors.js";
 import { fetchEpicorReceiptDetails, computeEpicorReceiptStatus } from "../epicor.js";
 
@@ -40,6 +40,66 @@ function renderCommentBadge(count) {
 }
 // --- END: MODAL LOGIC AREA ---
 
+// --- BEGIN: Payments section helper (top-level so the modal can use it) ---
+function renderPaymentsSection(poDetail) {
+  const payments = Array.isArray(poDetail?.payments) ? poDetail.payments : [];
+  const paidTotal = Number(poDetail?.paymentSummary?.paidTotal || 0);
+  const remaining = Number(
+    poDetail?.paymentSummary?.remaining ??
+    (Number(poDetail?.po?.total || 0) - paidTotal)
+  );
+
+  const rows = payments.map((p, i) => {
+    const when = p.paid_at ? new Date(p.paid_at).toLocaleString() : "";
+    const amt = (typeof money === "function")
+      ? money(Number(p.amount || 0), "CA$")
+      : `CA$${Number(p.amount || 0).toFixed(2)}`;
+    const method = p.method ? escapeHtml(String(p.method)) : '<span class="text-slate-400">(n/a)</span>';
+    const by = p.paid_by ? escapeHtml(String(p.paid_by)) : '<span class="text-slate-400">(unknown)</span>';
+    const note = p.note ? escapeHtml(String(p.note)) : '<span class="text-slate-400">(no note)</span>';
+    return `
+      <tr>
+        <td class="py-2 px-2 border border-slate-200 text-right text-slate-500">${i + 1}</td>
+        <td class="py-2 px-2 border border-slate-200">${when}</td>
+        <td class="py-2 px-2 border border-slate-200 text-right">${amt}</td>
+        <td class="py-2 px-2 border border-slate-200">${method}</td>
+        <td class="py-2 px-2 border border-slate-200">${by}</td>
+        <td class="py-2 px-2 border border-slate-200">${note}</td>
+      </tr>
+    `;
+  }).join("");
+
+  return `
+    <div class="mt-6">
+      <div class="text-base font-semibold mb-2">Payments</div>
+      <div class="overflow-x-auto">
+        <table class="min-w-full border-separate border-spacing-0 text-sm">
+          <thead>
+            <tr class="bg-slate-50 text-xs text-slate-600 uppercase">
+              <th class="py-2 px-2 border border-slate-200 text-right">#</th>
+              <th class="py-2 px-2 border border-slate-200">When</th>
+              <th class="py-2 px-2 border border-slate-200 text-right">Amount</th>
+              <th class="py-2 px-2 border border-slate-200">Method</th>
+              <th class="py-2 px-2 border border-slate-200">Paid By</th>
+              <th class="py-2 px-2 border border-slate-200">Note</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${payments.length ? rows : `<tr><td colspan="6" class="py-4 px-2 text-center text-slate-500 border border-slate-200">No payments recorded yet.</td></tr>`}
+          </tbody>
+          <tfoot>
+            <tr class="bg-slate-50 font-semibold">
+              <td class="py-2 px-2 border border-slate-200 text-right" colspan="2">Totals</td>
+              <td class="py-2 px-2 border border-slate-200 text-right">${(typeof money==="function") ? money(paidTotal,"CA$") : `CA$${paidTotal.toFixed(2)}`}</td>
+              <td class="py-2 px-2 border border-slate-200" colspan="3">Remaining: ${(typeof money==="function") ? money(remaining,"CA$") : `CA$${remaining.toFixed(2)}`}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  `;
+}
+// --- END: Payments section helper ---
 
 function fmtMoney(n){ return money(n||0, "CA$"); }
 function monthName(i){ return new Date(2000,i,1).toLocaleString(undefined,{month:"short"}); }
@@ -300,6 +360,9 @@ function wireOpenPoHandler() {
                 </tr></thead>
                 <tbody>${normalizedApprovals.length ? approvalsRows : `<tr><td colspan="5" class="py-4 px-2 text-center text-slate-500 border border-slate-200">No approvals yet.</td></tr>`}</tbody>
                 </table></div></div>`;
+
+            // 👉 NEW: payments table below approvals
+            const paymentsTable = renderPaymentsSection(data);
             
             const html = buildHtmlPreview(found);
             const isPaid = !!found.paid_at;
@@ -316,27 +379,30 @@ function wireOpenPoHandler() {
                 ${html}
                 ${ hasEpicor ? `<div class="mt-3 text-sm text-slate-600"><span class="font-medium">Epicor PO #:</span> ${escapeHtml(epicorPoNumber)}</div>` : "" }
                 ${ isPaid ? `<div class="mt-3 text-sm text-emerald-700 font-medium">Paid on: ${new Date(found.paid_at).toLocaleDateString()}</div>` : "" }
-                ${approvalsTable}`);
+                ${approvalsTable}
+                ${paymentsTable}
+            `);
             
             document.getElementById("preview-download")?.addEventListener("click", () => exportExcelUsingTemplate(found, found.items || []));
             const detailsBtn = document.getElementById("preview-details");
             if (detailsBtn && !detailsBtn.disabled) { detailsBtn.addEventListener("click", () => showDetailsModal(found)); }
+
+            // ✅ NEW: open the partial-payment dialog instead of the old hard mark-paid
             const markPaidBtn = document.getElementById("preview-mark-paid");
-            if(markPaidBtn) {
-                markPaidBtn.addEventListener("click", async () => {
-                    if (!confirm(`Are you sure you want to mark PO ${found.poId} as paid?`)) return;
-                    try { markPaidBtn.disabled = true; markPaidBtn.textContent = "Saving..."; await markPoAsPaid(found.id);
-                    const when = localMarkPaid(found.id);
-                    toast(`PO ${found.poId} marked as paid.`);
-                    // Update UI immediately
-                    const btn = document.getElementById('preview-mark-paid'); if (btn){ btn.disabled=true; btn.textContent='Marked Paid'; }
-                    const paidEl = document.createElement('div'); paidEl.className='mt-3 text-sm text-emerald-700 font-medium'; paidEl.textContent = 'Paid on: ' + new Date(when).toLocaleDateString(); document.querySelector('#app-modal-content')?.appendChild(paidEl);
-                    // Soft refresh without a full re-fetch
-                    const tb = document.getElementById('rowsTbody'); if (tb){ const refreshed = allPOData.slice(); /* reuse existing filters through refresh click */ }
-                    closeModal(); document.getElementById('refresh')?.click(); }
-                    catch(e) { toast(`Error: ${e.message}`, true); markPaidBtn.disabled = false; markPaidBtn.textContent = "Mark as Paid"; }
-                });
+            if (markPaidBtn) {
+              markPaidBtn.addEventListener("click", async () => {
+                try {
+                  const res = await fetch(`/api/po/${found.id}`);
+                  if (!res.ok) throw new Error('Could not load PO for payments');
+                  const fresh = await res.json();
+                  const mod = await import("./payments.js");
+                  mod.openPaymentDialog({ po: fresh.po, paymentSummary: fresh.paymentSummary });
+                } catch (e) {
+                  toast(`Error opening payment dialog: ${e.message}`, true);
+                }
+              });
             }
+
         } catch (err) {
             console.error('Failed to fetch PO details:', err);
             openModal(`<div class="p-8 text-center text-red-500">Error: Could not load PO details.</div>`);
@@ -373,6 +439,14 @@ export async function renderCashFlow(){
     const mv = mvRaw === "" ? "All" : monthName(parseInt(mvRaw,10));
     lr.textContent = "Meeting Month: " + mv + " • Year: " + yv + " • Updated " + new Date().toLocaleString();
   }
+
+  // Clicking Save in the new payment dialog dispatches a `po:payment:recorded` event.
+  // Refresh cashflow UI (KPIs/charts/table) when that happens.
+  document.addEventListener("po:payment:recorded", async () => {
+    allPOData = [];          // bust cache so /po-list is refetched on refresh-click
+    await fetchPOs();        // warm it again
+    await refresh();
+  });
 
   document.getElementById("refresh").addEventListener("click", async () => {
       allPOData = [];
