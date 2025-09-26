@@ -1,0 +1,71 @@
+import { getSql, json, handleOptions } from './db.js';
+import { getMethod, readJson, header, parseNumber } from './helpers.js';
+
+export default async (event, context) => {
+  const method = getMethod(event);
+  if (method === 'OPTIONS' || method === 'HEAD') return handleOptions();
+  if (method !== 'POST') return json({ error: 'Method not allowed' }, 405);
+
+  try {
+    const sql = getSql();
+    const body = await readJson(event);
+
+    // Normalize inputs
+    const poNumber = body.poId || body.po_number || null;
+    const user = body.user || {};
+    const createdBy = body.createdBy || user.name || header(event, 'x-user-email') || null;
+    const department = body.department || user.department || null;
+    const vendor = body.vendor || {};
+    const items = Array.isArray(body.items) ? body.items : [];
+
+    // Compute totals (fallback to provided fields if available)
+    let subtotal = 0;
+    for (const it of items) subtotal += parseNumber(it.total, parseNumber(it.qty, 1) * parseNumber(it.unitPrice, 0));
+    subtotal = parseNumber(body.subTotal, subtotal);
+    const tax = parseNumber(body.taxAmount, subtotal * 0.13);
+    const total = parseNumber(body.grandTotal, subtotal + tax);
+
+    const commonValues = [
+      createdBy,          // created_by
+      department,         // department
+      vendor.id || null,  // vendor_id
+      vendor.name || null,// vendor_name
+      vendor.address1 || null,
+      vendor.city || null,
+      vendor.state || null,
+      vendor.zip || null,
+      body.currency || 'CAD',
+      subtotal,
+      tax,
+      total,
+      body.status || 'Submitted',
+      JSON.stringify(body.meta || { user, items })
+    ];
+
+    // Try with po_number first; fall back if column doesn't exist
+    try {
+      const [po] = await sql(
+        `INSERT INTO purchase_orders
+           (po_number, created_by, department, vendor_id, vendor_name, vendor_address1, vendor_city, vendor_state, vendor_zip, currency, subtotal, tax, total, status, meta)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+         RETURNING id, po_number, created_at, status`,
+        [poNumber, ...commonValues]
+      );
+      return json({ ok: true, id: po.id, po_number: po.po_number });
+    } catch (e) {
+      // If column missing, insert without po_number
+      if (!/column .*po_number.* does not exist/i.test(String(e))) throw e;
+      const [po] = await sql(
+        `INSERT INTO purchase_orders
+           (created_by, department, vendor_id, vendor_name, vendor_address1, vendor_city, vendor_state, vendor_zip, currency, subtotal, tax, total, status, meta)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+         RETURNING id, created_at, status`,
+        commonValues
+      );
+      return json({ ok: true, id: po.id });
+    }
+  } catch (err) {
+    console.error(err);
+    return json({ error: err.message || String(err) }, 500);
+  }
+};

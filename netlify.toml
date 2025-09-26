@@ -1,0 +1,29 @@
+[build]
+  publish = "."
+
+[functions]
+  directory = "netlify/functions/"
+  external_node_modules = ["@neondatabase/serverless"]   # <-- add this line
+
+[[plugins]]
+package = "netlify-plugin-debug-cache"
+
+# FIXED: The "from" path now correctly includes a splat (*)
+# to capture the ID from the URL.
+[[redirects]]
+  from = "/api/po/*"
+  to = "/.netlify/functions/po-get?id=:splat"
+  status = 200
+
+# This is the general rule for all other API calls like /api/po-list
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
+
+[[headers]]
+  for = "/.netlify/functions/*"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"
+    Access-Control-Allow-Methods = "GET,POST,PATCH,OPTIONS,HEAD"
+    Access-Control-Allow-Headers = "Content-Type, Authorization, x-user-email"

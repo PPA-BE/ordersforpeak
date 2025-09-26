@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Purchase Order Entry</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://alcdn.msauth.net/browser/2.38.0/js/msal-browser.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.3.0/dist/exceljs.min.js"></script>
+</head>
+<body class="bg-slate-100">
+
+  <div id="authGate" class="min-h-screen flex items-center justify-center">
+    <div class="text-center">
+      <div class="animate-pulse text-slate-600 mb-2">Connecting to Microsoft…</div>
+      <div class="text-xs text-slate-500">Nearly there...</div>
+    </div>
+  </div>
+
+  <div id="app" class="hidden p-6">
+    <div class="max-w-7xl mx-auto space-y-6">
+      <div class="flex items-center justify-between">
+        <div>
+          <h1 class="text-xl font-semibold">Purchase Order (Interactive Mock)</h1>
+          <div class="text-xs text-slate-500">Signed in as: <span id="whoami" class="font-medium"></span></div>
+        </div>
+        <div class="flex gap-2">
+          <button id="addRow" class="btn btn-primary">+ Add Row</button>
+          <button id="clearAll" class="btn btn-muted">Clear</button>
+          <button id="exportExcel" class="btn btn-success">Export Excel</button>
+          <button id="logout" class="btn btn-dark">Logout</button>
+        </div>
+      </div>
+
+      <div id="managerCard" class="card hidden">
+        <div class="text-sm font-semibold mb-2">Your Manager</div>
+        <div id="managerBody" class="text-sm text-slate-700"><span class="opacity-70">Loading…</span></div>
+      </div>
+
+      <!-- Meta -->
+      <div class="card">
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <!-- VENDOR -->
+          <section class="panel">
+            <div class="panel-title">Vendor</div>
+            <label class="label">Search Vendors (ID or Name)</label>
+            <div class="flex gap-2 mb-2">
+              <input id="vendorSearch" class="input" placeholder="Start typing…" />
+              <button id="vendorLoad" class="btn btn-dark whitespace-nowrap">Load</button>
+            </div>
+            <div class="flex items-center gap-2 mb-2">
+              <span class="muted">Testing with Basic Auth in browser (dev only).</span>
+              <span class="chip"><span id="vendorCount">0</span> vendors</span>
+              <span id="vendorFilterCount" class="muted"></span>
+            </div>
+            <div id="vendorResults" class="vendor-list hidden" role="listbox" aria-label="Vendor results"></div>
+
+            <label class="label mt-3">Vendor Name (selected)</label>
+            <input id="vendorName" class="input mb-2" placeholder="e.g., SecurityOne" />
+            <input id="vendorId" type="hidden" />
+
+            <label class="label">Address</label>
+            <input id="vendorAddr1" class="input readonly mb-2" placeholder="Address" readonly />
+            <div class="grid grid-cols-3 gap-2 mb-2">
+              <div>
+                <label class="label">City</label>
+                <input id="vendorCity" class="input readonly" placeholder="City" readonly />
+              </div>
+              <div>
+                <label class="label">State/Prov</label>
+                <input id="vendorState" class="input readonly" placeholder="State/Prov" readonly />
+              </div>
+              <div>
+                <label class="label">Postal Code</label>
+                <input id="vendorZip" class="input readonly" placeholder="Postal Code" readonly />
+              </div>
+            </div>
+
+            <label class="label">Vendor Reference No</label>
+            <input id="vendorRefNo" class="input" placeholder="Optional reference" />
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">Ship To</div>
+            <div class="text-sm text-slate-800 whitespace-pre-line select-none">
+Peak Processing Solutions
+2065 Solar Crescent
+Oldcastle, ON, Canada
+N0R1L0
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">PO Details</div>
+            <div class="grid grid-cols-1 gap-2">
+              <div>
+                <label class="label">Date</label>
+                <input id="poDate" class="input readonly" readonly />
+              </div>
+              <div>
+                <label class="label">Peak HST No</label>
+                <input id="peakHst" class="input readonly" value="HST 709184311 RT0001" readonly />
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <!-- Table -->
+      <div class="overflow-x-auto rounded-lg shadow">
+        <table id="poTable" class="min-w-full border-separate border-spacing-0 bg-white">
+          <thead>
+            <tr class="bg-slate-800 text-white text-xs uppercase">
+              <th class="th w-20 text-center">Line #</th>
+              <th class="th w-44 text-center">Supplier Item #</th>
+              <th class="th w-40 text-center">Peak Part #</th>
+              <th class="th text-left">
+                Description
+                <div class="text-[11px] font-normal opacity-80">Brand Name, Potency/Strength (if applicable)</div>
+              </th>
+              <th class="th w-24 text-center">Qty</th>
+              <th class="th w-28 text-center">Unit Price</th>
+              <th class="th w-28 text-center">Line Total</th>
+              <th class="th w-12 text-center">✖</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+          <tfoot>
+            <tr>
+              <td colspan="6" class="foot-label">Subtotal</td>
+              <td id="subTotal" class="foot-val">$0.00</td>
+              <td class="foot-spacer"></td>
+            </tr>
+            <tr>
+              <td colspan="6" class="foot-label">HST (13%)</td>
+              <td id="hstAmount" class="foot-val">$0.00</td>
+              <td class="foot-spacer"></td>
+            </tr>
+            <tr>
+              <td colspan="6" class="foot-total">Grand Total</td>
+              <td id="grandTotal" class="foot-total-val">$0.00</td>
+              <td class="foot-total-spacer"></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <!-- Actions aligned to table -->
+      <div class="flex justify-end mt-3">
+        <button id="sendForApproval" class="px-4 py-2 rounded bg-indigo-600 text-white hover:bg-indigo-700 shadow">
+          Send for Approval
+        </button>
+      </div>
+
+
+      <!-- Dashboard -->
+      <div id="dashboard" class="card hidden">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-lg font-semibold">PO Dashboard (Last 30 Days)</h2>
+          <span id="dashAccessTag" class="chip">Hidden</span>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div class="panel"><div class="muted">POs Submitted</div><div id="metricCount" class="metric">0</div></div>
+          <div class="panel"><div class="muted">Total Submitted</div><div id="metricTotal" class="metric">$0.00</div></div>
+          <div class="panel"><div class="muted">Avg per PO</div><div id="metricAvg" class="metric">$0.00</div></div>
+        </div>
+        <div class="mt-4">
+          <div class="text-sm font-medium mb-2">Recent POs (All, Local)</div>
+          <div class="overflow-x-auto">
+            <table class="min-w-full border-separate border-spacing-0">
+              <thead>
+                <tr class="bg-slate-50 text-xs text-slate-600 uppercase">
+                  <th class="th">PO ID</th>
+                  <th class="th">Submitted</th>
+                  <th class="th">Lines</th>
+                  <th class="th">Total</th>
+                  <th class="th">Vendor</th>
+                  <th class="th">Status</th>
+                </tr>
+              </thead>
+              <tbody id="recentTable"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div id="myHistoryPanel" class="card">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-lg font-semibold">My Purchase Orders</h2>
+          <span class="text-xs text-slate-500">Click <span class="font-medium">Open</span> to preview the Excel, or <span class="font-medium">Load</span> to load into the form</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="min-w-full border-separate border-spacing-0">
+            <thead>
+              <tr class="bg-slate-50 text-xs text-slate-600 uppercase">
+                <th class="th">PO ID</th>
+                <th class="th">Submitted</th>
+                <th class="th">Lines</th>
+                <th class="th">Total</th>
+                <th class="th">Vendor</th>
+                <th class="th">Status</th>
+                <th class="th w-36">Action</th>
+              </tr>
+            </thead>
+            <tbody id="myHistoryBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <p class="text-xs text-slate-500">Tips: Tab/Shift+Tab to move, Enter on Unit Price recalculates, Ctrl/Cmd+S saves, Ctrl/Cmd+N adds a row.</p>
+    </div>
+
+    <div id="toast" class="toast hidden"></div>
+  </div>
+
+  <!-- Re-usable Modal -->
+  <div id="app-modal" class="fixed inset-0 z-[2147483647] hidden">
+    <div class="absolute inset-0 bg-black/50" data-modal-close></div>
+    <div class="relative mx-auto my-10 w-[92%] max-w-3xl">
+      <div class="relative bg-white rounded-2xl shadow-2xl ring-1 ring-slate-200 p-4">
+        <button id="modal-close" type="button" class="modal-close" aria-label="Close">✕</button>
+        <div id="modal-content"></div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/app.js"></script>
+</body>
+</html>

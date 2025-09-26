@@ -1,0 +1,6 @@
+// Netlify Functions client
+export async function createPO(body){ const r=await fetch('/.netlify/functions/po-create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); if(!r.ok) throw new Error('createPO '+r.status); return r.json(); }
+export async function listPO(params={}){ const qs=new URLSearchParams(params).toString(); const r=await fetch('/.netlify/functions/po-list'+(qs?`?${qs}`:'')); if(!r.ok) throw new Error('listPO '+r.status); return r.json(); }
+export async function getPO(id){ const r=await fetch('/.netlify/functions/po-get?id='+encodeURIComponent(id)); if(!r.ok) throw new Error('getPO '+r.status); return r.json(); }
+export async function updatePOStatus(id,payload){ const r=await fetch('/.netlify/functions/po-update-status?id='+encodeURIComponent(id),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload||{})}); if(!r.ok) throw new Error('updatePOStatus '+r.status); return r.json(); }
+export async function saveVendor(id,vendor){ const r=await fetch('/.netlify/functions/vendors-save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,vendor})}); if(!r.ok) throw new Error('saveVendor '+r.status); return r.json(); }
